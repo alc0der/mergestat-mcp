@@ -15,6 +15,8 @@ import { readFile } from "fs/promises";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { promisify } from "util";
+import { mkdir, writeFile } from "fs/promises";
+
 
 const execFileAsync = promisify(execFile);
 
@@ -53,7 +55,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "mergestat_sql",
-        description: "Execute a SQL query against a git repository using MergeStat. Returns the result as JSON.",
+        description: "Execute a SQL query against a git repository using MergeStat. Returns the result as a file by default (in /tmp/mergestat-mcp/). Outputting to chat is NOT recommended for large datasets as it can flood your context window.",
         inputSchema: {
           type: "object",
           properties: {
@@ -64,6 +66,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             repoPath: {
               type: "string",
               description: "Absolute path to the git repository to query. Defaults to current working directory if not provided.",
+            },
+            outputToChat: {
+              type: "boolean",
+              description: "If true, output the result directly to chat. WARNING: This is NOT recommended for large results as it may flood the model's context.",
+              default: false,
             }
           },
           required: ["sql"],
@@ -195,14 +202,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      const outputToChat = !!request.params.arguments.outputToChat;
+
+      if (outputToChat) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      } else {
+        const outputDir = "/tmp/mergestat-mcp";
+        await mkdir(outputDir, { recursive: true });
+
+        const timestamp = Date.now();
+        const rand = Math.random().toString(36).substring(2, 7);
+        const fileName = `query_result_${timestamp}_${rand}.json`;
+        const filePath = join(outputDir, fileName);
+
+        await writeFile(filePath, JSON.stringify(result, null, 2));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Query result written to: ${filePath}`,
+            },
+          ],
+        };
+      }
     } catch (error) {
       return {
         content: [
